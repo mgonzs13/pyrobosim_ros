@@ -23,6 +23,7 @@ from rclpy.timer import Timer
 
 from geometry_msgs.msg import Twist
 from pyrobosim.core import Robot, World
+from pyrobosim.core.objects import Object
 from pyrobosim.utils.logging import set_global_logger
 from pyrobosim_msgs.action import (  # type: ignore[attr-defined]
     DetectObjects,
@@ -40,10 +41,16 @@ from pyrobosim_msgs.msg import (  # type: ignore[attr-defined]
     WorldState,
 )
 from pyrobosim_msgs.srv import (  # type: ignore[attr-defined]
+    AddObject,
+    GetObject,
+    GetObjects,
+    RegisterObjectCategory,
+    RemoveObject,
     RequestWorldInfo,
     RequestWorldState,
     ResetWorld,
     SetLocationState,
+    UpdateObject,
 )
 from std_srvs.srv import Trigger
 
@@ -85,6 +92,8 @@ class WorldROSWrapper(Node):  # type: ignore[misc]
             * Serve ``request_world_info`` and ``request_world_state`` services to retrieve the world information and state, respectively, for planning.
             * Serve a ``set_location_state`` service to set the state of the location.
             * Serve a ``reset_world`` service to reset the world.
+            * Serve ``add_object``, ``remove_object``, ``update_object``, ``get_object``, and ``get_objects`` services for object CRUD operations.
+            * Serve a ``register_object_category`` service to register custom object categories at runtime.
             * Serve a ``execute_action`` action server to run single actions on a robot.
             * Serve a ``execute_task_plan`` action server to run entire task plans on a robot.
 
@@ -162,6 +171,49 @@ class WorldROSWrapper(Node):  # type: ignore[misc]
             callback_group=self.world_state_callback_group,
         )
 
+        # Object CRUD service servers
+        self.add_object_srv = self.create_service(
+            AddObject,
+            "add_object",
+            self.add_object_callback,
+            callback_group=self.world_state_callback_group,
+        )
+
+        self.remove_object_srv = self.create_service(
+            RemoveObject,
+            "remove_object",
+            self.remove_object_callback,
+            callback_group=self.world_state_callback_group,
+        )
+
+        self.update_object_srv = self.create_service(
+            UpdateObject,
+            "update_object",
+            self.update_object_callback,
+            callback_group=self.world_state_callback_group,
+        )
+
+        self.get_object_srv = self.create_service(
+            GetObject,
+            "get_object",
+            self.get_object_callback,
+            callback_group=self.world_state_callback_group,
+        )
+
+        self.get_objects_srv = self.create_service(
+            GetObjects,
+            "get_objects",
+            self.get_objects_callback,
+            callback_group=self.world_state_callback_group,
+        )
+
+        self.register_object_category_srv = self.create_service(
+            RegisterObjectCategory,
+            "register_object_category",
+            self.register_object_category_callback,
+            callback_group=self.world_state_callback_group,
+        )
+
         # Initialize robot specific interface dictionaries
         self.robot_command_subs: dict[str, Subscription[Twist]] = {}
         self.robot_state_pubs: dict[str, Publisher[RobotState]] = {}
@@ -181,9 +233,9 @@ class WorldROSWrapper(Node):  # type: ignore[misc]
         self.robot_reset_path_planner_servers: dict[
             str, Service[Trigger.Request, Trigger.Response]
         ] = {}
-        self.latest_robot_cmds: dict[
-            str, tuple[Time, npt.NDArray[np.float32]] | None
-        ] = {}
+        self.latest_robot_cmds: dict[str, tuple[Time, npt.NDArray[np.float32]] | None] = (
+            {}
+        )
 
         # Start a dynamics timer
         self.dynamics_rate = dynamics_rate
@@ -328,9 +380,7 @@ class WorldROSWrapper(Node):  # type: ignore[misc]
                 self,
                 DetectObjects,
                 f"{robot.name}/detect_objects",
-                execute_callback=partial(
-                    self.robot_detect_objects_callback, robot=robot
-                ),
+                execute_callback=partial(self.robot_detect_objects_callback, robot=robot),
                 callback_group=robot_action_callback_group,
             )
 
@@ -498,9 +548,7 @@ class WorldROSWrapper(Node):  # type: ignore[misc]
             Thread(target=robot.cancel_actions).start()
         return CancelResponse.ACCEPT
 
-    def plan_callback(
-        self, goal_handle: ExecuteTaskPlan.Goal
-    ) -> ExecuteTaskPlan.Result:
+    def plan_callback(self, goal_handle: ExecuteTaskPlan.Goal) -> ExecuteTaskPlan.Result:
         """
         Handle task plan action callback.
 
@@ -888,6 +936,232 @@ class WorldROSWrapper(Node):  # type: ignore[misc]
         response.success = self.world.reset(
             deterministic=request.deterministic, seed=request.seed
         )
+        return response
+
+    def add_object_callback(
+        self, request: AddObject.Request, response: AddObject.Response
+    ) -> AddObject.Response:
+        """
+        Adds an object to the world as a response to a service request.
+
+        :param request: The service request.
+        :param response: The unmodified service response.
+        :return: The modified service response containing the result.
+        """
+        self.get_logger().info(
+            f"Received add_object request: category={request.category}, "
+            f"name={request.name}, parent={request.parent}"
+        )
+
+        # Build keyword arguments for World.add_object()
+        kwargs: dict = {"category": request.category, "show": True}
+        if request.name:
+            kwargs["name"] = request.name
+        if request.parent:
+            kwargs["parent"] = request.parent
+        if request.has_pose:
+            kwargs["pose"] = pose_from_ros(request.pose)
+
+        obj = self.world.add_object(**kwargs)
+        if obj is None:
+            response.success = False
+            response.message = (
+                f"Failed to add object with category '{request.category}' "
+                f"at parent '{request.parent}'."
+            )
+            return response
+
+        response.success = True
+        response.message = f"Object '{obj.name}' added successfully."
+        response.object_state = ObjectState(
+            name=obj.name,
+            category=obj.category,
+            parent=obj.parent.name,
+            pose=pose_to_ros(obj.pose),
+        )
+        return response
+
+    def remove_object_callback(
+        self, request: RemoveObject.Request, response: RemoveObject.Response
+    ) -> RemoveObject.Response:
+        """
+        Removes an object from the world as a response to a service request.
+
+        :param request: The service request.
+        :param response: The unmodified service response.
+        :return: The modified service response containing the result.
+        """
+        self.get_logger().info(f"Received remove_object request: name={request.name}")
+
+        obj = self.world.get_object_by_name(request.name)
+        if obj is None:
+            response.success = False
+            response.message = f"Object '{request.name}' not found."
+            return response
+
+        success = self.world.remove_object(obj, show=True)
+        response.success = success
+        response.message = (
+            f"Object '{request.name}' removed successfully."
+            if success
+            else f"Failed to remove object '{request.name}'."
+        )
+        return response
+
+    def update_object_callback(
+        self, request: UpdateObject.Request, response: UpdateObject.Response
+    ) -> UpdateObject.Response:
+        """
+        Updates an existing object in the world as a response to a service request.
+
+        :param request: The service request.
+        :param response: The unmodified service response.
+        :return: The modified service response containing the result.
+        """
+        self.get_logger().info(
+            f"Received update_object request: name={request.name}, "
+            f"parent={request.parent}"
+        )
+
+        obj = self.world.get_object_by_name(request.name)
+        if obj is None:
+            response.success = False
+            response.message = f"Object '{request.name}' not found."
+            return response
+
+        kwargs: dict = {"obj": request.name}
+        if request.parent:
+            kwargs["loc"] = request.parent
+        if request.has_pose:
+            kwargs["pose"] = pose_from_ros(request.pose)
+
+        success = self.world.update_object(**kwargs)
+        response.success = success
+        if success:
+            # Re-fetch the object to get its updated state
+            obj = self.world.get_object_by_name(request.name)
+            response.message = f"Object '{request.name}' updated successfully."
+            response.object_state = ObjectState(
+                name=obj.name,
+                category=obj.category,
+                parent=obj.parent.name,
+                pose=pose_to_ros(obj.pose),
+            )
+        else:
+            response.message = f"Failed to update object '{request.name}'."
+        return response
+
+    def get_object_callback(
+        self, request: GetObject.Request, response: GetObject.Response
+    ) -> GetObject.Response:
+        """
+        Gets a specific object by name as a response to a service request.
+
+        :param request: The service request.
+        :param response: The unmodified service response.
+        :return: The modified service response containing the object state.
+        """
+        self.get_logger().info(f"Received get_object request: name={request.name}")
+
+        obj = self.world.get_object_by_name(request.name)
+        if obj is None:
+            response.success = False
+            response.message = f"Object '{request.name}' not found."
+            return response
+
+        response.success = True
+        response.message = "OK"
+        response.object_state = ObjectState(
+            name=obj.name,
+            category=obj.category,
+            parent=obj.parent.name,
+            pose=pose_to_ros(obj.pose),
+        )
+        return response
+
+    def get_objects_callback(
+        self, request: GetObjects.Request, response: GetObjects.Response
+    ) -> GetObjects.Response:
+        """
+        Gets all objects (optionally filtered by category) as a response to a service request.
+
+        :param request: The service request.
+        :param response: The unmodified service response.
+        :return: The modified service response containing the list of objects.
+        """
+        self.get_logger().info(
+            f"Received get_objects request: category={request.category}"
+        )
+
+        category_list = [request.category] if request.category else None
+        objects = self.world.get_objects(category_list=category_list)
+
+        response.objects = [
+            ObjectState(
+                name=obj.name,
+                category=obj.category,
+                parent=obj.parent.name,
+                pose=pose_to_ros(obj.pose),
+            )
+            for obj in objects
+        ]
+        return response
+
+    def register_object_category_callback(
+        self,
+        request: RegisterObjectCategory.Request,
+        response: RegisterObjectCategory.Response,
+    ) -> RegisterObjectCategory.Response:
+        """
+        Registers one or more custom object categories at runtime.
+
+        :param request: The service request containing category configurations.
+        :param response: The unmodified service response.
+        :return: The modified service response.
+        """
+        self.get_logger().info(
+            f"Received register_object_category request: "
+            f"{len(request.categories)} categories"
+        )
+
+        registered: list[str] = []
+        for cat_cfg in request.categories:
+            category_data: dict = {}
+
+            # Build footprint
+            if cat_cfg.footprint_type == "circle":
+                footprint: dict = {
+                    "type": "circle",
+                    "radius": cat_cfg.footprint_radius,
+                }
+            elif cat_cfg.footprint_type == "box":
+                footprint = {
+                    "type": "box",
+                    "dims": [cat_cfg.footprint_dim_x, cat_cfg.footprint_dim_y],
+                }
+            else:
+                response.success = False
+                response.message = (
+                    f"Invalid footprint_type '{cat_cfg.footprint_type}' "
+                    f"for category '{cat_cfg.category}'. Must be 'circle' or 'box'."
+                )
+                return response
+
+            if cat_cfg.footprint_height > 0.0:
+                footprint["height"] = cat_cfg.footprint_height
+
+            category_data["footprint"] = footprint
+            category_data["color"] = [
+                cat_cfg.color_r,
+                cat_cfg.color_g,
+                cat_cfg.color_b,
+            ]
+
+            Object.metadata.data[cat_cfg.category] = category_data
+            registered.append(cat_cfg.category)
+
+        response.success = True
+        response.message = f"Registered categories: {', '.join(registered)}"
         return response
 
 

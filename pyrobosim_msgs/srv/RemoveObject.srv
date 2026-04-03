@@ -1,0 +1,11 @@
+# ROS service to remove an object from the world
+
+# Request
+# Name of the object to remove
+string name
+
+---
+
+# Response
+bool success
+string message

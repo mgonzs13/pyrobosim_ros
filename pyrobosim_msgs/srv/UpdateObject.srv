@@ -1,0 +1,19 @@
+# ROS service to update an existing object in the world
+
+# Request
+# Name of the object to update
+string name
+
+# New parent location or object spawn (empty string keeps current)
+string parent
+
+# Optional new pose (only used if has_pose is true)
+bool has_pose false
+geometry_msgs/Pose pose
+
+---
+
+# Response
+bool success
+ObjectState object_state
+string message

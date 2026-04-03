@@ -1,0 +1,22 @@
+# ROS service to add an object to the world
+
+# Request
+# Object category (must be a registered category)
+string category
+
+# Optional object name (auto-generated if empty)
+string name
+
+# Parent location or object spawn name where the object will be placed
+string parent
+
+# Optional pose for the object (ignored if all zeros)
+bool has_pose false
+geometry_msgs/Pose pose
+
+---
+
+# Response
+bool success
+ObjectState object_state
+string message

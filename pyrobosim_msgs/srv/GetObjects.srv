@@ -1,0 +1,10 @@
+# ROS service to query objects in the world
+
+# Request
+# Optional category filter (empty string returns all objects)
+string category
+
+---
+
+# Response
+ObjectState[] objects

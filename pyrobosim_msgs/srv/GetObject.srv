@@ -1,0 +1,12 @@
+# ROS service to query a specific object by name
+
+# Request
+# Name of the object to query
+string name
+
+---
+
+# Response
+bool success
+ObjectState object_state
+string message

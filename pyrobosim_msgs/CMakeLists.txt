@@ -19,6 +19,7 @@ set(msg_files
   "msg/GoalSpecification.msg"
   "msg/HallwayState.msg"
   "msg/LocationState.msg"
+  "msg/ObjectCategoryConfig.msg"
   "msg/ObjectState.msg"
   "msg/Path.msg"
   "msg/RobotState.msg"
@@ -29,10 +30,16 @@ set(msg_files
 )
 
 set(srv_files
+  "srv/AddObject.srv"
+  "srv/GetObject.srv"
+  "srv/GetObjects.srv"
+  "srv/RegisterObjectCategory.srv"
+  "srv/RemoveObject.srv"
   "srv/RequestWorldInfo.srv"
   "srv/RequestWorldState.srv"
   "srv/ResetWorld.srv"
   "srv/SetLocationState.srv"
+  "srv/UpdateObject.srv"
 )
 
 set(action_files

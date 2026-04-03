@@ -1,0 +1,11 @@
+# ROS service to register one or more custom object categories at runtime
+
+# Request
+# List of object category configurations to register
+ObjectCategoryConfig[] categories
+
+---
+
+# Response
+bool success
+string message
