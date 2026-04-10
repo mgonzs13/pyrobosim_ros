@@ -531,6 +531,8 @@ class WorldROSWrapper(Node):  # type: ignore[misc]
 
             if result.execution_result.status == ExecutionResult.SUCCESS:
                 goal_handle.succeed()
+            elif result.execution_result.status == ExecutionResult.CANCELED:
+                goal_handle.canceled()
             else:
                 goal_handle.abort()
 
