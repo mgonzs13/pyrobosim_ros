@@ -521,13 +521,20 @@ class WorldROSWrapper(Node):  # type: ignore[misc]
         )
 
         # Package up the result
+        result = ExecuteTaskAction.Result(
+            execution_result=execution_result_to_ros(execution_result)
+        )
+
         if goal_handle.is_cancel_requested:
             goal_handle.canceled()
         else:
-            goal_handle.succeed()
-        return ExecuteTaskAction.Result(
-            execution_result=execution_result_to_ros(execution_result)
-        )
+
+            if result.execution_result.status == ExecutionResult.SUCCESS:
+                goal_handle.succeed()
+            else:
+                goal_handle.abort()
+
+        return result
 
     def action_cancel_callback(self, goal_handle: ServerGoalHandle) -> CancelResponse:  # type: ignore[type-arg] # Cannot add type args in Humble and Jazzy
         """
